@@ -1,0 +1,14 @@
+
+[PAGING] init_paging basladi
+[PAGING] Identity map: 0x0 - 0x0A000000
+[PAGING] Framebuffer (multiboot) haritalandi: 0xFD000000
+[PAGING] LAPIC MMIO (0xFEE00000) haritalandi
+[PAGING] Paging aktif (CR0.PG=1)
+
+[KayaOS/GUI] gui_init basladi
+[FT] kayaos_ft_init(): OK
+[FT] asset_find("a.ttf"): BULUNDU, boyut=529700 byte
+[FT] kayaos_ft_load_font_from_memory() handle: 0  (BASARILI)
+[GFX] graphics_available(): TRUE
+1024x768
+[GUI] Start menu hazir -- /desktop klasorundeki .opa dosyalari listelenecek.
