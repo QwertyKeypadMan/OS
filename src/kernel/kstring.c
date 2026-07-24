@@ -291,6 +291,27 @@ void *kmalloc(size_t size) {
     return k_malloc(size);
 }
 
+void* kmalloc_aligned(size_t size, size_t alignment) {
+    if (alignment == 0 || (alignment & (alignment - 1)) != 0) {
+        return NULL; /* Alignment 2'nin kuvveti değilse iptal et */
+    }
+
+    /* Adres işaretçisi (pointer) saklamak için fazladan yer ayırıyoruz */
+    size_t total_size = size + alignment + sizeof(void*);
+    void* raw_ptr = kmalloc(total_size);
+
+    if (!raw_ptr) return NULL;
+
+    /* Hizalanmış adresi hesapla */
+    uintptr_t raw_addr = (uintptr_t)raw_ptr + sizeof(void*);
+    uintptr_t aligned_addr = (raw_addr + (alignment - 1)) & ~(alignment - 1);
+
+    /* Orijinal ham adresi hizalanmış alanın hemen öncesine sakla (kfree için) */
+    ((void**)aligned_addr)[-1] = raw_ptr;
+
+    return (void*)aligned_addr;
+}
+
 void *krealloc(void *ptr, size_t size) {
     // Eski boyut bilinmıyorsa tahmini olarak 0 verilmez, ancak k_realloc_sized kullanmak esastır.
     return k_realloc_sized(ptr, 0, size);

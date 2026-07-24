@@ -81,7 +81,7 @@ FT_SOURCES  := $(FT_VENDOR_DIR)/src/base/ftbase.c \
 #  C KAYNAK DOSYALARI VE TCC SÜZME İŞLEMİ (Unity-Build Filtresi)
 # ==============================================================================
 # src/kernel/syscalls.c dosyası wildcard ile otomatik yakalanacaktır.
-RAW_C_SOURCES := $(wildcard src/kernel/*.c) $(wildcard src/kernel/*/*.c) $(FT_SOURCES) $(LUA_SOURCES) $(wildcard $(GENERATED_DIR)/*.c)
+RAW_C_SOURCES := $(wildcard src/kernel/*.c) $(wildcard src/kernel/*/*.c) $(wildcard src/kernel/*/*/*.c) $(FT_SOURCES) $(LUA_SOURCES) $(wildcard $(GENERATED_DIR)/*.c)
 
 # libtcc.c dosyası aşağıdaki C dosyalarını kendi içerisinde #include eder (Unity Build).
 # Bu alt kaynak dosyaları ayrı derlenirse "multiple definition" çakışması oluşur.

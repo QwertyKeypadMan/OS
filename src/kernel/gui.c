@@ -6,7 +6,7 @@
 #include "kernel/keyboard.h"
 #include "kernel/kstring.h"
 #include "kernel/io.h"
-#include "kernel/ramfs.h"
+#include "kernel/vfs.h"
 #include "kernel/opa.h"
 #include "freetype/kayaos/kayaos_freetype.h" 
 #include "kernel/rtc.h"
@@ -75,8 +75,6 @@ void gui_menubar_init(gui_menubar_t *mb) {
     k_memset(mb, 0, sizeof(gui_menubar_t));
     mb->active_menu = -1;
 }
-
-#include "kernel/gui.h"
 
 /* 1. Menü Ekleme */
 int gui_menubar_add_menu(gui_menubar_t *mb, const char *title) {
@@ -577,7 +575,7 @@ static void draw_topbar(void) {
     ui_draw_text(clock_text, w - 60, 5, graphics_rgb(255, 255, 255), bar_color, 14.0f);
 }
 
-/* BAŞLAT MENÜSÜ LİSTELEME */
+/* BAŞLAT MENÜSÜ LİSTELEME (VFS İLE GÜNCELLENDİ) */
 static int scan_desktop_apps(start_menu_item_t *out, int max_items) {
     int count = 0;
 	
@@ -605,51 +603,44 @@ static int scan_desktop_apps(start_menu_item_t *out, int max_items) {
         count++;
     }
 
-    /* Dynamic /desktop .opa Uygulamaları */
-    int dir = ramfs_resolve(ramfs_root(), "/desktop");
-    if (dir < 0) return count;
+    /* Dynamic /desktop .opa Uygulamaları (VFS Katmanı Kullanılıyor) */
+    vfs_dir_entry_t entries[GUI_START_MENU_MAX_ITEMS];
+    int entry_count = vfs_list("/desktop", entries, GUI_START_MENU_MAX_ITEMS);
 
-    const ramfs_node_t *dir_node = ramfs_get(dir);
-    if (dir_node == 0 || dir_node->type != RAMFS_NODE_DIR) return count;
+    if (entry_count > 0) {
+        for (int i = 0; i < entry_count && count < max_items; i++) {
+            if (entries[i].type == VFS_NODE_FILE) {
+                size_t len = k_strlen(entries[i].name);
+                if (len > 4 && k_streq(entries[i].name + len - 4, ".opa")) {
+                    start_menu_item_t *item = &out[count];
 
-    int child = dir_node->first_child;
-    while (child >= 0 && count < max_items) {
-        const ramfs_node_t *node = ramfs_get(child);
-        if (node == 0) break;
+                    size_t base_len = len - 4;
+                    if (base_len >= sizeof(item->display_name)) {
+                        base_len = sizeof(item->display_name) - 1;
+                    }
+                    k_memcpy(item->display_name, entries[i].name, base_len);
+                    item->display_name[base_len] = '\0';
 
-        if (node->type == RAMFS_NODE_FILE) {
-            size_t len = k_strlen(node->name);
-            if (len > 4 && k_streq(node->name + len - 4, ".opa")) {
-                start_menu_item_t *item = &out[count];
+                    item->full_path[0] = '\0';
+                    k_strlcpy(item->full_path, "/desktop/", sizeof(item->full_path));
+                    size_t prefix_len = k_strlen(item->full_path);
+                    k_strlcpy(item->full_path + prefix_len, entries[i].name,
+                              sizeof(item->full_path) - prefix_len);
 
-                size_t base_len = len - 4;
-                if (base_len >= sizeof(item->display_name)) {
-                    base_len = sizeof(item->display_name) - 1;
+                    char icon_name[24];
+                    size_t icon_base_len = base_len;
+                    if (icon_base_len > sizeof(icon_name) - 5) {
+                        icon_base_len = sizeof(icon_name) - 5;
+                    }
+                    k_memcpy(icon_name, entries[i].name, icon_base_len);
+                    icon_name[icon_base_len] = '\0';
+                    k_strlcpy(icon_name + icon_base_len, ".bmp", sizeof(icon_name) - icon_base_len);
+                    item->icon = asset_find(icon_name);
+
+                    count++;
                 }
-                k_memcpy(item->display_name, node->name, base_len);
-                item->display_name[base_len] = '\0';
-
-                item->full_path[0] = '\0';
-                k_strlcpy(item->full_path, "/desktop/", sizeof(item->full_path));
-                size_t prefix_len = k_strlen(item->full_path);
-                k_strlcpy(item->full_path + prefix_len, node->name,
-                          sizeof(item->full_path) - prefix_len);
-
-                char icon_name[24];
-                size_t icon_base_len = base_len;
-                if (icon_base_len > sizeof(icon_name) - 5) {
-                    icon_base_len = sizeof(icon_name) - 5;
-                }
-                k_memcpy(icon_name, node->name, icon_base_len);
-                icon_name[icon_base_len] = '\0';
-                k_strlcpy(icon_name + icon_base_len, ".bmp", sizeof(icon_name) - icon_base_len);
-                item->icon = asset_find(icon_name);
-
-                count++;
             }
         }
-
-        child = node->next_sibling;
     }
 
     return count;
@@ -724,7 +715,7 @@ static bool handle_start_menu_click(int mouse_x, int mouse_y) {
             } else if (k_streq(g_start_menu_cache[i].full_path, "builtin:notepad")) {
                 launch_notepad();
             } else {
-                opa_run(ramfs_root(), g_start_menu_cache[i].full_path);
+                opa_run(0, g_start_menu_cache[i].full_path);
             }
             return true;
         }
@@ -953,7 +944,7 @@ static bool handle_dock_click(int mouse_x, int mouse_y) {
         if (g_dock_apps[i].opa_path == 0) continue;
         int icon_x = dock_x + i * (GUI_DOCK_ICON + GUI_DOCK_GAP);
         if (mouse_x >= icon_x && mouse_x < icon_x + GUI_DOCK_ICON) {
-            opa_run(ramfs_root(), g_dock_apps[i].opa_path);
+            opa_run(0, g_dock_apps[i].opa_path);
             return true;
         }
     }
@@ -968,7 +959,7 @@ static void draw_statusbar(void) {
     graphics_fill_rect(0, bar_y, w, GUI_STATUSBAR_HEIGHT, graphics_rgb(18, 19, 24));
     graphics_fill_rect(0, bar_y, w, 1, graphics_rgb(60, 62, 74));
 
-    ui_draw_text("RAMFS Hazir", 10, bar_y + 4, 
+    ui_draw_text("VFS Hazir", 10, bar_y + 4, 
         graphics_rgb(160, 220, 160), graphics_rgb(18, 19, 24), 13.0f);
 
     char win_count_text[8];

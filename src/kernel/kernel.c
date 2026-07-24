@@ -15,6 +15,8 @@
 #include "kernel/apic.h"
 #include "kernel/rtc.h"
 #include "kernel/elf_loader.h"
+#include "kernel/pci/pci.h"
+#include "kernel/driver/storage/ahci.h"
 
 /* 🎨 GRAFİK ARAYÜZ KATMANI BAĞLANTISI */
 #include "kernel/gui.h"
@@ -39,7 +41,12 @@ void abort(void) {
 }
 
 void kernel_main(uint32_t magic, uint32_t mb_addr)
+
 {
+	vfs_init();
+
+    // 2. RAMFS Sürücüsünü Kök Dizin ("/") Olarak Bağla
+    vfs_mount("/", ramfs_get_driver());
     // 1. Multiboot değişkenini tanımlıyoruz
     multiboot_info_t *mbi = (multiboot_info_t *)mb_addr;
 
@@ -70,6 +77,10 @@ void kernel_main(uint32_t magic, uint32_t mb_addr)
     }
 
     // 4. DİĞER MODÜLLERİN BAŞLATILMASI
+	pci_init();
+	driver_manager_init();
+	ahci_driver_register();
+	block_init();
     ramfs_init();
     mouse_initialize();
 
