@@ -61,6 +61,28 @@ static void pit_wait_10ms(void) {
     outb(0x61, port61);
 }
 
+void apic_delay_ms(uint32_t ms) {
+    /* APIC henüz kalibre edilmediyse veya devre dışıysa PIT ile yedek bekleme yapıyoruz[cite: 12] */
+    if (apic_ticks_per_ms == 0) {
+        for (uint32_t i = 0; i < ms / 10; i++) {
+            pit_wait_10ms(); /*[cite: 12] */
+        }
+        return;
+    }
+
+    /* 1. Timer'ı kesme üretmeyecek (LVT_TIMER_MASKED) moda alıyoruz[cite: 12] */
+    lapic_write(LAPIC_LVT_TIMER, LVT_TIMER_MASKED); /*[cite: 12] */
+    lapic_write(LAPIC_TIMER_DIV, DIVIDER_16);       /*[cite: 12] */
+
+    /* 2. Toplam milisaniye için gereken tick sayısını hesaba aktarıp sayacı başlatıyoruz[cite: 12] */
+    lapic_write(LAPIC_TIMER_ICR, ms * apic_ticks_per_ms); /*[cite: 12] */
+
+    /* 3. Sayaç sıfırlanana kadar işlemciyi bekletiyoruz[cite: 12] */
+    while (lapic_read(LAPIC_TIMER_CCR) > 0) { /*[cite: 12] */
+        __asm__ __volatile__("pause");
+    }
+}
+
 /* APIC Timer'i kalibre edip baslatan Ana Fonksiyon */
 void apic_timer_init(void) {
     /* 1. Timer hizini 16'ya bol */

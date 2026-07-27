@@ -11,6 +11,8 @@
 #include "freetype/kayaos/kayaos_freetype.h" 
 #include "kernel/rtc.h"
 #include "kernel/notepad.h"
+#include "kernel/acpi/acpi.h"
+#include "kernel/acpi/acpi_power.h"
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -23,15 +25,88 @@
 /* Harici Uygulama Başlatıcı Tanımları */
 extern void kterm_open(void);
 extern void fm_open(void);
+extern void kaya_designer_ui_open(void);
 extern void fm_handle_mouse(int win_id, int mouse_x, int mouse_y, uint8_t buttons);
 extern void notepad_handle_mouse(int win_id, int mouse_x, int mouse_y, uint8_t buttons);
 
-/* graphics.c icinde tanimli ama header'a eklenmemis olabilir */
+/* graphics.c icinde tanimli fonksiyonlar ve backbuffer erisimi */
 extern void fill_rounded_rect_alpha(int x, int y, int w, int h, int r, uint32_t color, uint8_t alpha);
 extern void opa_window_on_closed(int win_id);
+extern uint32_t *graphics_get_backbuffer(void); // Backbuffer adresini veren fonksiyon
+
+/* Kernel bellek tahsis edicisi (Kernel yapına göre kmalloc veya malloc kullanabilirsin) */
+extern void *kmalloc(size_t size);
 
 #define GUI_START_MENU_MAX_ITEMS 8
 #define GUI_START_ICON_SIZE    32
+
+/* ACPI Buton Ölçüleri */
+#define GUI_POWER_BTN_W 95
+#define GUI_POWER_BTN_H 28
+#define GUI_POWER_AREA_H 38
+
+/* =========================================================================
+ * WALLPAPER CACHING & DOUBLE BUFFERING SISTEMI
+ * ========================================================================= */
+static uint32_t *g_wallpaper_cache = NULL;
+static int g_wp_cache_w = 0;
+static int g_wp_cache_h = 0;
+static bool g_wallpaper_cached = false;
+
+/* Duvar kağıdı değiştiğinde önbelleği sıfırlamak için dışarıdan çağrılabilir */
+void gui_invalidate_wallpaper(void) {
+    g_wallpaper_cached = false;
+}
+
+static void init_wallpaper_cache(int w, int h) {
+    if (g_wallpaper_cache == NULL || g_wp_cache_w != w || g_wp_cache_h != h) {
+        g_wallpaper_cache = (uint32_t *)kmalloc(w * h * sizeof(uint32_t));
+        if (!g_wallpaper_cache) {
+            g_wallpaper_cached = false;
+            return;
+        }
+    }
+
+    g_wp_cache_w = w;
+    g_wp_cache_h = h;
+
+    const asset_t *wp_asset = asset_find("wallpaper.bmp");
+    if (wp_asset != NULL) {
+        bmp_draw_stretched_asset("wallpaper.bmp", 0, 0, w, h, false);
+    } else {
+        graphics_fill_rect(0, 0, w, h, graphics_rgb(24, 25, 32));
+    }
+
+    // Backbuffer -> Cache (SSE Optimizasyonlu Kopyalama)
+    uint32_t *backbuffer = graphics_get_backbuffer();
+    if (backbuffer != NULL) {
+        memcpy(g_wallpaper_cache, backbuffer, w * h * sizeof(uint32_t));
+        g_wallpaper_cached = true;
+    }
+}
+
+static void draw_wallpaper(void) {
+    int w = (int)graphics_width();
+    int h = (int)graphics_height();
+
+    if (!g_wallpaper_cached || g_wp_cache_w != w || g_wp_cache_h != h) {
+        init_wallpaper_cache(w, h);
+        return;
+    }
+
+    // Cache -> Backbuffer (SSE Optimizasyonlu Kopyalama)
+    uint32_t *backbuffer = graphics_get_backbuffer();
+    if (backbuffer && g_wallpaper_cache) {
+        memcpy(backbuffer, g_wallpaper_cache, w * h * sizeof(uint32_t));
+    } else {
+        const asset_t *wp_asset = asset_find("wallpaper.bmp");
+        if (wp_asset != NULL) {
+            bmp_draw_stretched_asset("wallpaper.bmp", 0, 0, w, h, false);
+        } else {
+            graphics_fill_rect(0, 0, w, h, graphics_rgb(24, 25, 32));
+        }
+    }
+}
 
 /* Forward Declarations */
 void notepad_open(const char *path);
@@ -84,11 +159,9 @@ int gui_menubar_add_menu(gui_menubar_t *mb, const char *title) {
     k_strlcpy(mb->headers[idx].title, title, sizeof(mb->headers[idx].title));
     mb->headers[idx].item_count = 0;
 
-    // X Offset Hesaplama: İlk eleman 6px içeriden başlar, diğerleri öncekinin genişliğine göre kayar
     if (idx == 0) {
         mb->headers[idx].x_offset = 6;
     } else {
-        // Her karakteri ortalama 8px kabul edip üzerine 16px padding ekliyoruz
         int prev_len = k_strlen(mb->headers[idx - 1].title);
         int prev_width = (prev_len * 8) + 16;
         mb->headers[idx].x_offset = mb->headers[idx - 1].x_offset + prev_width;
@@ -138,37 +211,28 @@ bool gui_menubar_add_separator(gui_menubar_t *mb, int menu_idx) {
 void gui_draw_menubar(gui_menubar_t *mb, int x, int y, int w) {
     if (!mb) return;
 
-    // 1. Menü başlıklarını ekrana çiz
     for (int i = 0; i < mb->header_count; i++) {
         gui_menu_header_t *m = &mb->headers[i];
         int header_x = x + m->x_offset;
 
-        // Başlık metnini çiz
         ui_draw_text(m->title, header_x + 8, y + 4,
                      graphics_rgb(255, 255, 255), graphics_rgb(40, 40, 45), 12.0f);
     }
 
-    // 2. Aktif (açık) olan alt menüyü (dropdown) çiz
     if (mb->active_menu >= 0 && mb->active_menu < mb->header_count) {
         gui_menu_header_t *m = &mb->headers[mb->active_menu];
 
-        // Dropdown menünün başlangıç koordinatları ve eleman yüksekliği
         int drop_x = x + m->x_offset;
         int drop_y = y + GUI_MENUBAR_HEIGHT;
-        int item_height = 20; // Her bir alt elemanın yüksekliği (piksel)
+        int item_height = 20;
 
         for (int j = 0; j < m->item_count; j++) {
             gui_menu_item_t *item = &m->items[j];
-            
-            // Elemanın Y koordinat hesabı
             int item_y = drop_y + (j * item_height);
 
             if (!item->is_separator) {
-                // Alt menü elemanının metnini çiz
                 ui_draw_text(item->title, drop_x + 12, item_y + 3,
                              graphics_rgb(20, 20, 25), graphics_rgb(245, 246, 248), 12.0f);
-            } else {
-                // Çizgi / Ayırıcı (Separator) çizim mantığınız varsa buraya ekleyebilirsiniz
             }
         }
     }
@@ -180,17 +244,14 @@ bool gui_menubar_handle_mouse(gui_menubar_t *mb, int mouse_x, int mouse_y, uint8
 
     if (mb->active_menu >= 0 && mb->active_menu < mb->header_count) {
         gui_menu_header_t *m = &mb->headers[mb->active_menu];
-        // ... Açık menü etkileşim kodlarınız ...
     }
 
     for (int i = 0; i < mb->header_count; i++) {
         gui_menu_header_t *m = &mb->headers[i];
-        // ... Başlık tıklama / hover kontrol kodlarınız ...
     }
 
     return false;
 }
-
 
 /* =========================================================================
  * BAŞLAT MENÜSÜ VERİ YAPILARI VE CACHE
@@ -467,51 +528,6 @@ static void set_title(gui_window_t *win, const char *text) {
     win->title[i] = '\0';
 }
 
-static void draw_wallpaper(void) {
-    int w = (int)graphics_width();
-    int h = (int)graphics_height();
-    int horizon_y = (h * 62) / 100;
-
-    for (int y = 0; y < horizon_y; y++) {
-        int t = (y * 255) / (horizon_y > 0 ? horizon_y : 1);
-        int r = 20 + ((255 - 20) * t) / 255;
-        int g = 24 + ((140 - 24) * t) / 255;
-        int b = 58 + ((90  - 58) * t) / 255;
-        graphics_fill_rect(0, y, w, 1, graphics_rgb((uint8_t)r, (uint8_t)g, (uint8_t)b));
-    }
-
-    for (int y = horizon_y; y < h; y++) {
-        int span = h - horizon_y;
-        int t = ((y - horizon_y) * 255) / (span > 0 ? span : 1);
-        int r = 60 - (40 * t) / 255;
-        int g = 30 - (25 * t) / 255;
-        int b = 70 - (30 * t) / 255;
-        if (r < 10) r = 10;
-        if (g < 8)  g = 8;
-        if (b < 20) b = 20;
-        graphics_fill_rect(0, y, w, 1, graphics_rgb((uint8_t)r, (uint8_t)g, (uint8_t)b));
-    }
-
-    int sun_x = w / 2 + (int)wave_table[(frame_counter / 6) % 16];
-    int sun_y = horizon_y - h / 6;
-    for (int ring = 5; ring >= 1; ring--) {
-        int extra = ring * 10;
-        uint32_t glow = graphics_rgb(255, (uint8_t)(150 + extra), (uint8_t)(80 + extra));
-        ring_circle(sun_x, sun_y, 30 + ring * 8, glow);
-    }
-    fill_circle(sun_x, sun_y, 28, graphics_rgb(255, 214, 150));
-
-    for (int line = 0; line < 2; line++) {
-        int base_y = horizon_y + 10 + line * 14;
-        uint32_t line_color = graphics_rgb(255, (uint8_t)(180 - line * 40), (uint8_t)(120 - line * 30));
-        for (int x = 0; x < w; x += 4) {
-            int idx = ((x / 4) + (int)(frame_counter / 4) + line * 3) % 16;
-            int offset = wave_table[idx] / 4;
-            graphics_fill_rect(x, base_y + offset, 3, 1, line_color);
-        }
-    }
-}
-
 static void draw_debug_font_status(void) {
     if (!graphics_available()) return;
 
@@ -575,11 +591,10 @@ static void draw_topbar(void) {
     ui_draw_text(clock_text, w - 60, 5, graphics_rgb(255, 255, 255), bar_color, 14.0f);
 }
 
-/* BAŞLAT MENÜSÜ LİSTELEME (VFS İLE GÜNCELLENDİ) */
+/* BAŞLAT MENÜSÜ LİSTELEME */
 static int scan_desktop_apps(start_menu_item_t *out, int max_items) {
     int count = 0;
-	
-    /* Terminal */
+
     if (count < max_items) {
         k_strlcpy(out[count].display_name, "Terminal", sizeof(out[count].display_name));
         k_strlcpy(out[count].full_path, "builtin:terminal", sizeof(out[count].full_path));
@@ -587,15 +602,13 @@ static int scan_desktop_apps(start_menu_item_t *out, int max_items) {
         count++;
     }
 
-    /* Dosya Yöneticisi */
     if (count < max_items) {
         k_strlcpy(out[count].display_name, "Dosya Yoneticisi", sizeof(out[count].display_name));
         k_strlcpy(out[count].full_path, "builtin:filemanager", sizeof(out[count].full_path));
         out[count].icon = asset_find("folder.bmp");
         count++;
     }
-	
-    /* Notepad */
+
     if (count < max_items) {
         k_strlcpy(out[count].display_name, "Notepad", sizeof(out[count].display_name));
         k_strlcpy(out[count].full_path, "builtin:notepad", sizeof(out[count].full_path));
@@ -603,7 +616,13 @@ static int scan_desktop_apps(start_menu_item_t *out, int max_items) {
         count++;
     }
 
-    /* Dynamic /desktop .opa Uygulamaları (VFS Katmanı Kullanılıyor) */
+    if (count < max_items) {
+        k_strlcpy(out[count].display_name, "Designer UI", sizeof(out[count].display_name));
+        k_strlcpy(out[count].full_path, "builtin:designer-ui", sizeof(out[count].full_path));
+        out[count].icon = asset_find("designer.bmp");
+        count++;
+    }
+
     vfs_dir_entry_t entries[GUI_START_MENU_MAX_ITEMS];
     int entry_count = vfs_list("/desktop", entries, GUI_START_MENU_MAX_ITEMS);
 
@@ -649,7 +668,7 @@ static int scan_desktop_apps(start_menu_item_t *out, int max_items) {
 static void start_menu_geometry(int *out_x, int *out_y, int *out_h, int item_count) {
     *out_x = 10;
     *out_y = GUI_TOPBAR_HEIGHT + 6;
-    *out_h = (item_count > 0 ? item_count : 1) * GUI_START_ITEM_H + 16;
+    *out_h = ((item_count > 0 ? item_count : 1) * GUI_START_ITEM_H) + 16 + GUI_POWER_AREA_H;
 }
 
 static void draw_start_menu(int mouse_x, int mouse_y) {
@@ -668,33 +687,57 @@ static void draw_start_menu(int mouse_x, int mouse_y) {
     if (count == 0) {
         ui_draw_text("Uygulama yok", menu_x + 14, menu_y + 14,
             graphics_rgb(150, 150, 160), graphics_rgb(26, 27, 34), 13.0f);
-        return;
+    } else {
+        for (int i = 0; i < count; i++) {
+            int item_y = menu_y + 8 + i * GUI_START_ITEM_H;
+            bool hover = (mouse_x >= menu_x && mouse_x < menu_x + GUI_START_MENU_W &&
+                          mouse_y >= item_y && mouse_y < item_y + GUI_START_ITEM_H);
+
+            if (hover) {
+                graphics_fill_rect(menu_x + 4, item_y, GUI_START_MENU_W - 8, GUI_START_ITEM_H,
+                    graphics_rgb(46, 49, 62));
+            }
+
+            int icon_x = menu_x + 12;
+            int icon_y = item_y + (GUI_START_ITEM_H - GUI_START_ICON_SIZE) / 2;
+
+            if (g_start_menu_cache[i].icon != 0) {
+                bmp_draw(g_start_menu_cache[i].icon->data, g_start_menu_cache[i].icon->size, icon_x, icon_y, true);
+            } else {
+                graphics_draw_rounded_rect(icon_x, icon_y, GUI_START_ICON_SIZE, GUI_START_ICON_SIZE, 6,
+                    graphics_rgb(70, 74, 90));
+            }
+
+            ui_draw_text(g_start_menu_cache[i].display_name, icon_x + GUI_START_ICON_SIZE + 10,
+                item_y + (GUI_START_ITEM_H - 16) / 2,
+                graphics_rgb(225, 225, 232), graphics_rgb(26, 27, 34), 14.0f);
+        }
     }
 
-    for (int i = 0; i < count; i++) {
-        int item_y = menu_y + 8 + i * GUI_START_ITEM_H;
-        bool hover = (mouse_x >= menu_x && mouse_x < menu_x + GUI_START_MENU_W &&
-                      mouse_y >= item_y && mouse_y < item_y + GUI_START_ITEM_H);
+    int power_y = menu_y + menu_h - GUI_POWER_AREA_H;
+    graphics_fill_rect(menu_x + 6, power_y - 4, GUI_START_MENU_W - 12, 1, graphics_rgb(55, 58, 72));
 
-        if (hover) {
-            graphics_fill_rect(menu_x + 4, item_y, GUI_START_MENU_W - 8, GUI_START_ITEM_H,
-                graphics_rgb(46, 49, 62));
-        }
-
-        int icon_x = menu_x + 12;
-        int icon_y = item_y + (GUI_START_ITEM_H - GUI_START_ICON_SIZE) / 2;
-
-        if (g_start_menu_cache[i].icon != 0) {
-            bmp_draw(g_start_menu_cache[i].icon->data, g_start_menu_cache[i].icon->size, icon_x, icon_y, true);
-        } else {
-            graphics_draw_rounded_rect(icon_x, icon_y, GUI_START_ICON_SIZE, GUI_START_ICON_SIZE, 6,
-                graphics_rgb(70, 74, 90));
-        }
-
-        ui_draw_text(g_start_menu_cache[i].display_name, icon_x + GUI_START_ICON_SIZE + 10,
-            item_y + (GUI_START_ITEM_H - 16) / 2,
-            graphics_rgb(225, 225, 232), graphics_rgb(26, 27, 34), 14.0f);
+    int sd_x = menu_x + 10;
+    int sd_y = power_y + 4;
+    bool sd_hover = (mouse_x >= sd_x && mouse_x < sd_x + GUI_POWER_BTN_W &&
+                     mouse_y >= sd_y && mouse_y < sd_y + GUI_POWER_BTN_H);
+    
+    if (sd_hover) {
+        graphics_fill_rect(sd_x, sd_y, GUI_POWER_BTN_W, GUI_POWER_BTN_H, graphics_rgb(60, 35, 40));
     }
+    bmp_draw_asset("shutdown.bmp", sd_x + 4, sd_y + 2, true);
+    ui_draw_text("Kapat", sd_x + 32, sd_y + 7, graphics_rgb(240, 200, 200), graphics_rgb(26, 27, 34), 12.0f);
+
+    int rb_x = menu_x + 115;
+    int rb_y = power_y + 4;
+    bool rb_hover = (mouse_x >= rb_x && mouse_x < rb_x + GUI_POWER_BTN_W &&
+                     mouse_y >= rb_y && mouse_y < rb_y + GUI_POWER_BTN_H);
+
+    if (rb_hover) {
+        graphics_fill_rect(rb_x, rb_y, GUI_POWER_BTN_W, GUI_POWER_BTN_H, graphics_rgb(40, 50, 65));
+    }
+    bmp_draw_asset("reboot.bmp", rb_x + 4, rb_y + 2, true);
+    ui_draw_text("Yeniden B.", rb_x + 32, rb_y + 7, graphics_rgb(200, 220, 240), graphics_rgb(26, 27, 34), 12.0f);
 }
 
 static bool handle_start_menu_click(int mouse_x, int mouse_y) {
@@ -705,6 +748,24 @@ static bool handle_start_menu_click(int mouse_x, int mouse_y) {
 
     if (mouse_x < menu_x || mouse_x >= menu_x + GUI_START_MENU_W) return false;
 
+    int power_y = menu_y + menu_h - GUI_POWER_AREA_H;
+    int sd_x = menu_x + 10;
+    int sd_y = power_y + 4;
+    int rb_x = menu_x + 115;
+    int rb_y = power_y + 4;
+
+    if (mouse_x >= sd_x && mouse_x < sd_x + GUI_POWER_BTN_W &&
+        mouse_y >= sd_y && mouse_y < sd_y + GUI_POWER_BTN_H) {
+        acpi_shutdown();
+        return true;
+    }
+
+    if (mouse_x >= rb_x && mouse_x < rb_x + GUI_POWER_BTN_W &&
+        mouse_y >= rb_y && mouse_y < rb_y + GUI_POWER_BTN_H) {
+        acpi_reboot();
+        return true;
+    }
+
     for (int i = 0; i < count; i++) {
         int item_y = menu_y + 8 + i * GUI_START_ITEM_H;
         if (mouse_y >= item_y && mouse_y < item_y + GUI_START_ITEM_H) {
@@ -714,6 +775,8 @@ static bool handle_start_menu_click(int mouse_x, int mouse_y) {
                 fm_open();
             } else if (k_streq(g_start_menu_cache[i].full_path, "builtin:notepad")) {
                 launch_notepad();
+            } else if (k_streq(g_start_menu_cache[i].full_path, "builtin:designer-ui")) {
+                kaya_designer_ui_open();
             } else {
                 opa_run(0, g_start_menu_cache[i].full_path);
             }
@@ -891,45 +954,6 @@ static void draw_windows(int mouse_x, int mouse_y) {
     }
 }
 
-static void draw_dock(int mouse_x, int mouse_y) {
-    int w = (int)graphics_width();
-    int h = (int)graphics_height();
-    int total_width = GUI_DOCK_ICONS * GUI_DOCK_ICON + (GUI_DOCK_ICONS - 1) * GUI_DOCK_GAP;
-    int dock_x = w / 2 - total_width / 2;
-    int dock_y = h - GUI_STATUSBAR_HEIGHT - GUI_DOCK_HEIGHT - 10;
-
-    fill_rounded_rect_alpha(dock_x - 16, dock_y, total_width + 32, GUI_DOCK_HEIGHT, 18,
-        graphics_rgb(28, 30, 38), 190);
-
-    hovered_dock_icon = -1;
-
-    for (int i = 0; i < GUI_DOCK_ICONS; i++) {
-        int icon_x = dock_x + i * (GUI_DOCK_ICON + GUI_DOCK_GAP);
-        int icon_y = dock_y + (GUI_DOCK_HEIGHT - GUI_DOCK_ICON) / 2;
-        int cx = icon_x + GUI_DOCK_ICON / 2;
-        int cy = icon_y + GUI_DOCK_ICON / 2;
-
-        int dx = mouse_x - cx;
-        int dy = mouse_y - cy;
-        bool hover = (dx * dx + dy * dy) <= (GUI_DOCK_ICON / 2) * (GUI_DOCK_ICON / 2);
-        bool has_app = (g_dock_apps[i].opa_path != 0);
-
-        int lift = (hover && has_app) ? 6 : 0;
-        if (hover && has_app) hovered_dock_icon = i;
-
-        uint32_t body_color = has_app
-            ? (hover ? graphics_rgb(70, 110, 200) : graphics_rgb(50, 54, 66))
-            : graphics_rgb(36, 37, 44);
-
-        graphics_draw_rounded_rect(icon_x, icon_y - lift, GUI_DOCK_ICON, GUI_DOCK_ICON, 10, body_color);
-
-        if (has_app) {
-            char initial[2] = { g_dock_apps[i].label[0], '\0' };
-            ui_draw_text(initial, cx - 5, icon_y - lift + GUI_DOCK_ICON / 2 - 9,
-                graphics_rgb(235, 238, 245), body_color, 16.0f);
-        }
-    }
-}
 
 static bool handle_dock_click(int mouse_x, int mouse_y) {
     int w = (int)graphics_width();
@@ -972,11 +996,38 @@ static void draw_statusbar(void) {
         graphics_rgb(180, 180, 190), graphics_rgb(18, 19, 24), 13.0f);
 }
 
-/* GÜNCELLENEN İMLEÇ ÇİZİM FONKSİYONU */
-static void draw_cursor(int x, int y, bool pressed) {
-    (void)pressed;
+
+static uint32_t g_cursor_saved_pixels[20 * 20];
+static int g_prev_cursor_x = -1, g_prev_cursor_y = -1;
+
+void draw_cursor(int x, int y, bool pressed) {
+    uint32_t *backbuffer = graphics_get_backbuffer();
+    int screen_w = (int)graphics_width();
+
+    // 1. Eski imleç alanını geri yükle
+    if (g_prev_cursor_x >= 0) {
+        for (int cy = 0; cy < 20; cy++) {
+            for (int cx = 0; cx < 20; cx++) {
+                backbuffer[(g_prev_cursor_y + cy) * screen_w + (g_prev_cursor_x + cx)] = 
+                    g_cursor_saved_pixels[cy * 20 + cx];
+            }
+        }
+    }
+
+    // 2. Yeni konumun altındaki pikselleri kaydet
+    for (int cy = 0; cy < 20; cy++) {
+        for (int cx = 0; cx < 20; cx++) {
+            g_cursor_saved_pixels[cy * 20 + cx] = 
+                backbuffer[(y + cy) * screen_w + (x + cx)];
+        }
+    }
+
+    // 3. İmleci çiz
     bmp_draw_asset("cursor.bmp", x, y, true);
+    g_prev_cursor_x = x;
+    g_prev_cursor_y = y;
 }
+
 
 /* ---- GENEL GUI API'SI ---- */
 void gui_init(void) {
@@ -1127,7 +1178,6 @@ void gui_draw(void) {
     draw_debug_font_status(); 
     draw_topbar();
     draw_windows(g_mouse_x, g_mouse_y);
-    draw_dock(g_mouse_x, g_mouse_y);
     draw_statusbar();
     draw_start_menu(g_mouse_x, g_mouse_y); 
     draw_notification();

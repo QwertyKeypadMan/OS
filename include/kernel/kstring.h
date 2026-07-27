@@ -13,6 +13,7 @@ int k_strncmp(const char *left, const char *right, size_t count);
 char *k_strcpy(char *dest, const char *src);
 size_t k_strlcpy(char *dest, const char *src, size_t size);
 bool k_streq(const char *left, const char *right);
+void sse_memcpy_fast(void *dest, const void *src, size_t n);
 bool k_isspace(char ch);
 bool k_isalpha(char ch);
 char k_toupper(char ch);

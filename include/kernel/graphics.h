@@ -20,6 +20,7 @@ void graphics_scroll_up(uint32_t pixels, uint32_t fill_color);
 /* Kırpma (Clipping) Fonksiyonları */
 void graphics_set_clip(int32_t x, int32_t y, int32_t w, int32_t h);
 void graphics_reset_clip(void);
+uint32_t *graphics_get_backbuffer(void);
 
 /* İlkel Çizim API'leri */
 void graphics_draw_pixel(int x, int y, uint32_t color);

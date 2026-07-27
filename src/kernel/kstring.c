@@ -251,6 +251,11 @@ void k_free(void *ptr)
     (void)ptr;
 }
 
+void kfree(void *ptr)
+{
+    (void)ptr;
+}
+
 // Eski boyutu açıkça alan GÜVENLİ realloc
 void *k_realloc_sized(void *ptr, size_t old_size, size_t new_size)
 {

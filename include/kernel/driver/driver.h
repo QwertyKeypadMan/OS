@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include "kernel/pci/pci.h"
 
 /* Herhangi bir PCI alanını es geçmek için joker (wildcard) değerler */
 #define PCI_ANY_ID    0xFFFF
@@ -21,20 +22,7 @@ typedef enum {
 struct driver;
 
 /* KayaOS PCI Cihaz Yapısı (Mevcut PCI sisteminizdeki yapıya adapte edebilirsiniz) */
-typedef struct pci_device {
-    uint8_t  bus;
-    uint8_t  slot;
-    uint8_t  func;
-    uint16_t vendor_id;
-    uint16_t device_id;
-    uint8_t  class_code;
-    uint8_t  subclass;
-    uint8_t  prog_if;
-    uint8_t  revision;
-    
-    struct driver* driver;   /* Bağlanan sürücü (eşleştiyse) */
-    void*          priv_data;/* Driver'ın cihaza özel tutacağı veri */
-} pci_device_t;
+
 
 /* KayaOS Sürücü Tanım Yapısı */
 typedef struct driver {

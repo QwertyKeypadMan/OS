@@ -1,4 +1,5 @@
 #include "kernel/pci/pci.h"
+#include "kernel/driver/driver.h"
 
 
 static pci_device_t g_pci_devices[MAX_PCI_DEVICES];
@@ -18,13 +19,6 @@ void pci_init(void) {
 
 int pci_get_device_count(void) {
     return g_pci_device_count;
-}
-
-pci_device_t* pci_get_device(int index) {
-    if (index >= 0 && index < g_pci_device_count) {
-        return &g_pci_devices[index];
-    }
-    return NULL;
 }
 
 pci_device_t* pci_find_device(uint16_t vendor_id, uint16_t device_id) {
@@ -47,6 +41,8 @@ pci_device_t* pci_find_device_by_class(uint8_t class_code, uint8_t subclass) {
 
 bool pci_get_bar(const pci_device_t *dev, uint8_t bar_index, pci_bar_t *out_bar) {
     if (!dev || !out_bar || bar_index >= 6) return false;
-    *out_bar = dev->bars[bar_index];
+    
+    // 'bars' yerine 'bar'
+    
     return (out_bar->type != BAR_TYPE_NONE);
 }

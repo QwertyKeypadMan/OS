@@ -644,6 +644,10 @@ void graphics_cursor_hide(void) {
     cursor_is_saved = false;
 }
 
+uint32_t *graphics_get_backbuffer(void) {
+    return back_buffer;
+}
+
 /* x,y : imlecin sol-üst köşesi (hotspot değil). argb: w*h boyutunda
  * 0xAARRGGBB dizisi, en fazla 32x32. Her karede: cursor_hide() (eski
  * konumu geri yükle) -> GUI çizimini yap -> cursor_show() (yeni konumda
@@ -1002,7 +1006,7 @@ bool graphics_initialize(const multiboot_info_t *info) {
         
         uint32_t* fb32 = (uint32_t*)framebuffer;
         for (uint32_t i = 0; i < fb_width * fb_height; i++) {
-            fb32[i] = 0x001A1A24; /* Koyu Gece Modu Arka Planı */
+         
         }
     }
 

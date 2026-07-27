@@ -56,9 +56,10 @@ static int ahci_driver_init(pci_device_t* dev) {
         .vendor_id = dev->vendor_id,
         .device_id = dev->device_id,
         .bus       = dev->bus,
-        .slot      = dev->slot,  /* veya pci_device_t yapındaki isme göre dev->slot / dev->device_id */
-        .func      = dev->func,  /* dev->function yerine dev->func kullanıldı */
-        .abar_phys = abar_phys
+        .slot = dev->device,   
+		
+	    .func = dev->function, 
+         .abar_phys = abar_phys
     };
 
     /* AHCI Controller'ı başlat ve portları tara */

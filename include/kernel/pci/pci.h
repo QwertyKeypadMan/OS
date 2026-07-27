@@ -4,7 +4,6 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
-#include "kernel/driver/driver.h"
 
 #define MAX_PCI_DEVICES 64
 
@@ -28,8 +27,27 @@ typedef struct {
     bool is_64bit;
 } pci_bar_t;
 
-/* PCI Cihaz Yapısı */
+/* PCI Cihaz Yapısı (Tüm alanlar tam olarak tanımlandı) */
+typedef struct pci_device {
+    uint16_t vendor_id;
+    uint16_t device_id;
+    uint8_t  class_code;
+    uint8_t  subclass;
+    uint8_t  prog_if;
+    uint8_t  revision_id;
+    
+    /* pci_scan.c için gerekli eksik alanlar: */
+    uint8_t  header_type;
+    uint8_t  interrupt_line;
+    uint8_t  interrupt_pin;
+	uint8_t  driver;
 
+    uint8_t  bus;
+    uint8_t  device;
+    uint8_t  function;
+
+    pci_bar_t bars[6];
+} pci_device_t;
 
 /* Düşük Seviye Configuration Space API */
 uint8_t  pci_read_config8(uint8_t bus, uint8_t dev, uint8_t func, uint8_t offset);
