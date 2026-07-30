@@ -142,6 +142,19 @@ static void mark_dirty_all(void) {
     dirty_any = true;
 }
 
+/* REIS FIX: draw_wallpaper() ve draw_cursor() backbuffer'a graphics_draw_pixel'i
+ * ATLAYARAK dogrudan yaziyor (performans icin), bu yuzden graphics_present()
+ * bu bolgeleri hic "kirli" gormuyordu ve VRAM'e hic kopyalanmiyorlardi
+ * (ya da sadece baska bir cizim tesaduf yakinlarindan gectiyse). Bu iki
+ * fonksiyon gui.c'nin bu bolgeleri manuel isaretlemesini sagliyor. */
+void graphics_mark_dirty_rect(int x0, int y0, int x1, int y1) {
+    mark_dirty(x0, y0, x1, y1);
+}
+
+void graphics_mark_dirty_all(void) {
+    mark_dirty_all();
+}
+
 static void fast_copy(void *dest, const void *src, size_t bytes) {
     uint32_t *d32 = (uint32_t *)dest;
     const uint32_t *s32 = (const uint32_t *)src;
@@ -416,6 +429,58 @@ void graphics_draw_triangle(int x0, int y0, int x1, int y1, int x2, int y2, uint
     graphics_draw_line(x2, y2, x0, y0, color);
 }
 
+/* REIS FIX (AA): tek bir pikseli arka planla "coverage" (0.0-1.0) oraninda
+ * karistirarak yazar. coverage>=1 ise dogrudan (blend'siz) yazar -- yani
+ * govde/kenar gibi tam-kapsama pikselleri hicbir ekstra maliyete girmiyor,
+ * sadece kose kavis siniri (~1 piksellik bant) bu blend yolunu kullaniyor. */
+static void draw_pixel_aa(int x, int y, uint32_t color, float coverage) {
+    if (coverage <= 0.0f) return;
+    if (coverage >= 1.0f) {
+        graphics_draw_pixel(x, y, color);
+        return;
+    }
+    if (!fb_ready || x < clip_x0 || x >= clip_x1 || y < clip_y0 || y >= clip_y1) return;
+
+    uint8_t *target = backbuffer_enabled ? back_buffer : framebuffer;
+    uint32_t bypp = fb_bpp / 8;
+    uint8_t *p = target + (uint32_t)y * fb_pitch + (uint32_t)x * bypp;
+
+    uint32_t bg = unpack_color(read_native_pixel(p));
+    uint32_t blended = blend_rgb(bg, color, (uint32_t)(coverage * 255.0f));
+    write_native_pixel(p, pack_color(blended));
+
+    if (backbuffer_enabled) {
+        mark_dirty(x, y, x + 1, y + 1);
+    }
+}
+
+/* REIS FIX (AA): is_inside_rounded_rect'in bool halinin yerine, kose
+ * bolgelerinde 0.0-1.0 arasi yumusak bir "coverage" dondurur -- boylece
+ * kose kenarlari sert "merdiven" gibi degil, anti-aliased gorunur. Duz
+ * kenar/govde pikselleri her zaman 1.0 dondurur. */
+static float rounded_rect_coverage(int px, int py, int x, int y, int w, int h, int r) {
+    if (px < x || px >= x + w || py < y || py >= y + h) return 0.0f;
+
+    int ccx = 0, ccy = 0;
+    bool in_corner = true;
+
+    if (px < x + r && py < y + r)                { ccx = x + r;     ccy = y + r; }
+    else if (px >= x + w - r && py < y + r)       { ccx = x + w - r; ccy = y + r; }
+    else if (px < x + r && py >= y + h - r)       { ccx = x + r;     ccy = y + h - r; }
+    else if (px >= x + w - r && py >= y + h - r)  { ccx = x + w - r; ccy = y + h - r; }
+    else { in_corner = false; }
+
+    if (!in_corner) return 1.0f;
+
+    int dx = px - ccx;
+    int dy = py - ccy;
+    float dist = k_sqrt((float)(dx * dx + dy * dy));
+    float coverage = (float)r - dist + 0.5f;
+    if (coverage < 0.0f) coverage = 0.0f;
+    if (coverage > 1.0f) coverage = 1.0f;
+    return coverage;
+}
+
 /* REİS FIX: Eskiden bu fonksiyon w*h piksel için TEK TEK graphics_draw_pixel
  * çağırıyordu (köşe olsun olmasın!). Şimdi: orta düz gövde TEK fill_rect
  * çağrısıyla geçiliyor, üst/alt köşe bantlarında da sadece köşe yayının
@@ -438,27 +503,17 @@ void graphics_draw_rounded_rect(int x, int y, int w, int h, int r, uint32_t colo
         graphics_fill_rect(x, y + r, w, h - 2 * r, color);
     }
 
-    /* Üst ve alt köşe bantları */
+    /* Üst ve alt köşe bantları (REİS FIX: artık anti-aliased) */
     for (int band = 0; band < 2; band++) {
         for (int row = 0; row < r; row++) {
             int cy = (band == 0) ? row : (h - r + row);
-            int local_cy = (band == 0) ? row : (r - 1 - row);
-            int dy = r - 1 - local_cy;
             int py = y + cy;
 
-            /* Bu satırda dairenin içine giren en küçük sütunu bul (r küçük
-             * olduğundan bu döngü ucuzdur, örn. r=16 için en fazla 16 adım) */
-            int inset = r;
             for (int cx = 0; cx < r; cx++) {
-                int dx = r - 1 - cx;
-                if (dx * dx + dy * dy <= r * r) { inset = cx; break; }
-            }
-
-            for (int cx = inset; cx < r; cx++) {
-                int dx = r - 1 - cx;
-                if (dx * dx + dy * dy <= r * r) {
-                    graphics_draw_pixel(x + cx, py, color);              /* sol köşe */
-                    graphics_draw_pixel(x + w - 1 - cx, py, color);      /* sağ köşe (ayna) */
+                float coverage = rounded_rect_coverage(x + cx, py, x, y, w, h, r);
+                if (coverage > 0.0f) {
+                    draw_pixel_aa(x + cx, py, color, coverage);              /* sol köşe */
+                    draw_pixel_aa(x + w - 1 - cx, py, color, coverage);      /* sağ köşe (ayna) */
                 }
             }
 
@@ -1094,15 +1149,18 @@ void graphics_draw_pixel_alpha(int x, int y, uint32_t src_color) {
     graphics_draw_pixel(x, y, graphics_rgb(out_r, out_g, out_b));
 }
 
-/* Alpha destekli Rounded Rect çizici */
+/* Alpha destekli Rounded Rect çizici (REİS FIX: artık köşe kenarlarında
+ * anti-aliased -- coverage, verilen alpha ile çarpılıyor, yani hem
+ * saydamlık hem yumuşak kenar aynı anda çalışıyor). */
 void fill_rounded_rect_alpha(int x, int y, int w, int h, int r, uint32_t color, uint8_t alpha) {
     for (int iy = y; iy < y + h; iy++) {
         for (int ix = x; ix < x + w; ix++) {
-            if (is_inside_rounded_rect(ix, iy, x, y, w, h, r)) {
-                uint32_t bg = graphics_get_pixel(ix, iy); // Arka planı oku
-                uint32_t mixed = blend_colors(color, bg, alpha); // Karıştır
-                graphics_draw_pixel(ix, iy, mixed);
-            }
+            float coverage = rounded_rect_coverage(ix, iy, x, y, w, h, r);
+            if (coverage <= 0.0f) continue;
+            uint32_t bg = graphics_get_pixel(ix, iy); // Arka planı oku
+            uint8_t effective_alpha = (uint8_t)((float)alpha * coverage);
+            uint32_t mixed = blend_colors(color, bg, effective_alpha); // Karıştır
+            graphics_draw_pixel(ix, iy, mixed);
         }
     }
 }

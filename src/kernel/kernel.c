@@ -3,6 +3,7 @@
 #include <stddef.h>
 
 #include "kernel/graphics.h"
+
 #include "kernel/multiboot.h"
 #include "kernel/ramfs.h"
 #include "kernel/shell.h"
@@ -17,15 +18,20 @@
 #include "kernel/elf_loader.h"
 #include "kernel/pci/pci.h"
 #include "kernel/driver/storage/ahci.h"
+#include "kernel/driver/driver.h"
+#include "../src/kernel/driver/gpu/virtio_gpu/virtio_gpu.h"
+#include "../src/kernel/net/virtio_net.h"
+#include "../src/kernel/net/ethernet.h"
 
-/* 🎨 GRAFİK ARAYÜZ KATMANI BAĞLANTISI */
+/*  GRAFİK ARAYÜZ KATMANI BAĞLANTISI */
 #include "kernel/gui.h"
+#include "kernel/kstring.h"
 
 #define MULTIBOOT_BOOTLOADER_MAGIC 0x2BADB002
 
 extern unsigned char fontum_psf[];
 extern unsigned int fontum_psf_len;
-extern void init_lua_system(void);
+extern bool gui_needs_redraw(void);
 
 /* Global Mouse Koordinatları */
 static int mouse_x = 400;
@@ -37,6 +43,25 @@ void abort(void) {
     
     while (1) {
         __asm__ __volatile__("cli; hlt");
+    }
+}
+
+void init_network(void) {
+    pci_device_t* dev = pci_find_device(VIRTIO_VENDOR_ID, VIRTIO_NET_DEVICE_ID_LEGACY);
+    if (!dev) {
+        dev = pci_find_device(VIRTIO_VENDOR_ID, VIRTIO_NET_DEVICE_ID_MODERN);
+    }
+
+    if (dev) {
+        pci_bar_t bar0;
+        if (pci_get_bar(dev, 0, &bar0)) {
+            uint16_t io_base = (uint16_t)(bar0.base_address & ~0x3);
+
+            if (virtio_net_init(io_base) == 0) {
+                /* Ethernet katmanını ilklendir */
+                ethernet_init();
+            }
+        }
     }
 }
 
@@ -77,12 +102,16 @@ void kernel_main(uint32_t magic, uint32_t mb_addr)
     }
 
     // 4. DİĞER MODÜLLERİN BAŞLATILMASI
+	ramfs_init();
 	pci_init();
+	virtio_gpu_driver_register();
+	init_network();
 	driver_manager_init();
 	ahci_driver_register();
 	block_init();
-    ramfs_init();
     mouse_initialize();
+	kprintf("%ux%u\n", graphics_width(), graphics_height());
+    
 
     mouse_x = graphics_width() / 2;
     mouse_y = graphics_height() / 2;
@@ -121,6 +150,8 @@ void kernel_main(uint32_t magic, uint32_t mb_addr)
 
         /* TÜM EKRANI, PENCERELERİ VE İMLECİ ÇİZ */
         gui_draw();
+        ethernet_poll();
+		
     }
 
     shell_run();

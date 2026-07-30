@@ -1,5 +1,6 @@
 #include "virtio_gpu.h"
 #include "virtio_gpu_debug.h"
+#include "kernel/kstring.h"
 
 bool virtio_gpu_display_fetch_info(virtio_gpu_device_t *dev) {
     virtio_gpu_ctrl_hdr_t cmd = {0};
@@ -12,12 +13,12 @@ bool virtio_gpu_display_fetch_info(virtio_gpu_device_t *dev) {
     if (resp.pmodes[0].enabled) {
         dev->width = resp.pmodes[0].r.width;
         dev->height = resp.pmodes[0].r.height;
-        virtio_gpu_log(VIRTIO_LOG_PREFIX_DISPLAY, "Ekran Bilgisi Alindi: %dx%d (Monitor 0 Active)", dev->width, dev->height);
+        kprintf(VIRTIO_LOG_PREFIX_DISPLAY, "Ekran Bilgisi Alindi: %dx%d (Monitor 0 Active)", dev->width, dev->height);
     } else {
         /* Varsayılan Fallback Çözünürlüğü */
         dev->width = 1024;
         dev->height = 768;
-        virtio_gpu_log(VIRTIO_LOG_PREFIX_DISPLAY, "Monitor Pasif. Varsayilan 1024x768 Atandi.");
+        kprintf(VIRTIO_LOG_PREFIX_DISPLAY, "Monitor Pasif. Varsayilan 1024x768 Atandi.");
     }
 
     return true;

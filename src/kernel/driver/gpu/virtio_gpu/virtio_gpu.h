@@ -1,3 +1,4 @@
+
 #ifndef VIRTIO_GPU_H
 #define VIRTIO_GPU_H
 
@@ -160,7 +161,7 @@ typedef struct {
     uintptr_t mmio_base;
     uint8_t irq;
     bool is_mmio;
-    
+
     /* VirtQueues */
     virtqueue_t *vq_control;
     virtqueue_t *vq_cursor;
@@ -193,5 +194,6 @@ bool virtio_gpu_display_set_scanout(virtio_gpu_device_t *dev, uint32_t scanout_i
 
 void virtio_gpu_irq_handler(void *arg);
 virtio_gpu_device_t* virtio_gpu_get_device(void);
+void virtio_gpu_driver_register(void);
 
 #endif

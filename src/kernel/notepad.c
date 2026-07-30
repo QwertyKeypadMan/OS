@@ -12,10 +12,7 @@ extern void fill_rounded_rect_alpha(int x, int y, int w, int h, int r, uint32_t 
 extern void fill_circle(int cx, int cy, int r, uint32_t color);
 extern void gui_notify(const char *text);
 
-/* ---- SADECE GORSEL/ETKILESIM AMACLI, HEADER'A DOKUNMAYAN YEREL DURUM ----
- * notepad_state_t'yi hic degistirmiyoruz -- asagidaki statikler sadece
- * notepad.c'nin kendi menu/kaydetme mantigi icin, disari (header) hicbir
- * bagimlilik eklemiyor. */
+/* ---- SADECE GORSEL/ETKILESIM AMACLI, HEADER'A DOKUNMAYAN YEREL DURUM ---- */
 static int  s_frame = 0;
 static int  s_last_mouse_x = -1;
 static int  s_last_mouse_y = -1;
@@ -29,10 +26,11 @@ static bool s_save_prompt_is_saveas = false;
 static char s_save_prompt_buf[64];
 static int  s_save_prompt_len = 0;
 
-/* ---- MENU GEOMETRISI (cizim ve tiklama ayni sabitleri kullanir) ---- */
-#define NP_MENU_H        26
-#define NP_DROPDOWN_W    172
-#define NP_DROPDOWN_ITEM_H 24
+/* ---- MENU GEOMETRISI VE ARAYUZ SABITLERI ---- */
+#define NP_MENU_H          26
+#define NP_DROPDOWN_W      172
+#define NP_DROPDOWN_ITEM_H   24
+#define UI_CHAR_WIDTH      7  /* ui_draw_text font genisligi ile birebir uyumlu */
 
 static const char *s_menu_labels[4] = { "Dosya", "Duzen", "Gorunum", "Yardim" };
 static const int   s_menu_x[4]      = { 10, 62, 118, 182 };
@@ -163,14 +161,8 @@ void notepad_new(void) {
 }
 
 /* -------------------------------------------------------------------------- */
-/* KAYDETME AKIŞI (Kaydet / Farklı Kaydet / İsim Sorma Promptu)              */
+/* KAYDETME AKIŞI                                                             */
 /* -------------------------------------------------------------------------- */
-/* Yazilacak tam RAMFS yolunu hesaplar:
- *  - Kullanici '/' ile baslayan bir isim yazdiysa oldugu gibi kullanilir.
- *  - Dosyanin zaten bir yolu varsa (Farkli Kaydet ile isim degistiriliyorsa)
- *    ayni DIZIN korunur, sadece dosya adi degisir.
- *  - Hicbiri yoksa (hic kaydedilmemis yeni belge) dogrudan RAMFS kokune
- *    ("/") yazilir. */
 static void notepad_resolve_save_path(const char *typed_name, char *out, size_t out_size) {
     if (typed_name[0] == '/') {
         k_strlcpy(out, typed_name, out_size);
@@ -184,7 +176,7 @@ static void notepad_resolve_save_path(const char *typed_name, char *out, size_t 
             if (g_np.filepath[i] == '/') { last_slash = i; break; }
         }
         if (last_slash >= 0) {
-            int dir_len = last_slash + 1; /* '/' dahil */
+            int dir_len = last_slash + 1;
             if (dir_len >= (int)out_size) dir_len = (int)out_size - 1;
             k_memcpy(out, g_np.filepath, dir_len);
             out[dir_len] = '\0';
@@ -207,10 +199,6 @@ static void notepad_do_save_with_name(const char *typed_name) {
     gui_notify(ok ? "Dosya kaydedildi." : "Dosya kaydetme hatasi!");
 }
 
-/* "Kaydet" ya da "Farkli Kaydet" tetiklendiginde cagrilir.
- * is_saveas == false ve dosyanin zaten bir yolu varsa: soru sormadan
- * ayni isimle uzerine yazar (klasik Notepad davranisi).
- * Aksi halde (yeni belge ya da Farkli Kaydet): isim sorma promptunu acar. */
 static void notepad_begin_save(bool is_saveas) {
     if (!is_saveas && g_np.filepath[0] != '\0') {
         bool ok = notepad_save_file(NULL);
@@ -313,7 +301,7 @@ void notepad_move_cursor_line(int line_delta) {
 }
 
 /* -------------------------------------------------------------------------- */
-/* ARAYÜZ ÇİZİMİ (KOYU TEMA + DOSYA MENÜSÜ + KAYDETME PROMPTU)              */
+/* ARAYÜZ ÇİZİMİ                                                              */
 /* -------------------------------------------------------------------------- */
 void notepad_draw(gui_window_t *win, int cx, int cy, int cw, int ch) {
     (void)win;
@@ -359,22 +347,21 @@ void notepad_draw(gui_window_t *win, int cx, int cy, int cw, int ch) {
         ui_draw_text(s_menu_labels[i], cx + s_menu_x[i], cy + 5, label_fg, label_bg, 13.0f);
     }
 
-    /* Şu an düzenlenen dosyanın adı — menü çubuğunun sağında, her zaman görünür */
+    /* Başlıkta dosya adı gösterimi */
     char header_name[80];
     k_strlcpy(header_name, g_np.filename, sizeof(header_name));
     if (g_np.modified) {
         k_strlcat(header_name, " *", sizeof(header_name));
     }
     int header_len = (int)k_strlen(header_name);
-    int header_x = cx + cw - 26 - (header_len * 7);
-    if (header_x < cx + 220) header_x = cx + 220; /* menu sekmeleriyle çakışmasın */
+    int header_x = cx + cw - 26 - (header_len * UI_CHAR_WIDTH);
+    if (header_x < cx + 220) header_x = cx + 220;
     ui_draw_text(header_name, header_x, cy + 5,
         g_np.modified ? modified_col : dim_text, menu_bg, 13.0f);
 
-    /* Değiştirildi göstergesi: en sağda küçük renkli nokta */
     fill_circle(cx + cw - 16, cy + NP_MENU_H / 2, 4, g_np.modified ? modified_col : saved_col);
 
-    /* 3. "Dosya" dropdown menüsü (Kaydet / Farklı Kaydet) */
+    /* 3. "Dosya" dropdown menüsü */
     if (s_file_menu_open) {
         int drop_x = cx + s_menu_x[0] - 6;
         int drop_y = cy + NP_MENU_H;
@@ -398,7 +385,7 @@ void notepad_draw(gui_window_t *win, int cx, int cy, int cw, int ch) {
         }
     }
 
-    /* 4. Satır numarası gutter'ı + metin alanı */
+    /* 4. Metin Alanı ve Satır Numaraları */
     int edit_y = cy + NP_MENU_H;
     int status_h = 24;
     int edit_h = ch - NP_MENU_H - status_h;
@@ -410,6 +397,15 @@ void notepad_draw(gui_window_t *win, int cx, int cy, int cw, int ch) {
 
     int visible_lines = edit_h / NOTEPAD_LINE_HEIGHT;
     if (visible_lines < 1) visible_lines = 1;
+
+    /* Otomatik Kaydırma (Auto-Scroll): İmleci görünür alanda tut */
+    int cur_line_idx = g_np.current_line - 1;
+    if (cur_line_idx < g_np.scroll_y) {
+        g_np.scroll_y = cur_line_idx;
+    } else if (cur_line_idx >= g_np.scroll_y + visible_lines) {
+        g_np.scroll_y = cur_line_idx - visible_lines + 1;
+    }
+    if (g_np.scroll_y < 0) g_np.scroll_y = 0;
 
     int line_idx = 0;
     int char_idx = 0;
@@ -429,7 +425,7 @@ void notepad_draw(gui_window_t *win, int cx, int cy, int cw, int ch) {
 
                 char lnbuf[12];
                 int lp = notepad_itoa(line_idx + 1, lnbuf);
-                int ln_x = cx + gutter_w - 10 - (lp * 7);
+                int ln_x = cx + gutter_w - 10 - (lp * UI_CHAR_WIDTH);
                 uint32_t ln_bg = cursor_on_line ? linehl_col : bg_gutter;
                 uint32_t ln_fg = cursor_on_line ? accent : dim_text;
                 ui_draw_text(lnbuf, ln_x, print_y, ln_fg, ln_bg, 12.0f);
@@ -445,9 +441,10 @@ void notepad_draw(gui_window_t *win, int cx, int cy, int cw, int ch) {
                 uint32_t line_bg = cursor_on_line ? linehl_col : bg_main;
                 ui_draw_text(line_buf, cx + gutter_w + 10, print_y, text_col, line_bg, 13.0f);
 
+                /* DÜZELTME: UI_CHAR_WIDTH (7px) kullanılarak imlecin hizalaması sağlandı */
                 if (cursor_on_line) {
                     int cursor_col_offset = g_np.cursor_pos - line_start;
-                    int cursor_x = cx + gutter_w + 10 + (cursor_col_offset * NOTEPAD_CHAR_WIDTH);
+                    int cursor_x = cx + gutter_w + 10 + (cursor_col_offset * UI_CHAR_WIDTH);
                     bool blink_on = ((s_frame / 30) % 2) == 0;
                     if (blink_on) {
                         graphics_fill_rect(cursor_x, print_y - 1, 2, NOTEPAD_LINE_HEIGHT - 2, cursor_col);
@@ -462,7 +459,7 @@ void notepad_draw(gui_window_t *win, int cx, int cy, int cw, int ch) {
         char_idx++;
     }
 
-    /* 5. İnce kaydırma çubuğu */
+    /* 5. Kaydırma Çubuğu */
     int total_lines = (line_idx > 0) ? line_idx : 1;
     if (total_lines > visible_lines) {
         int track_x = cx + cw - 8;
@@ -485,7 +482,7 @@ void notepad_draw(gui_window_t *win, int cx, int cy, int cw, int ch) {
         graphics_fill_rect(track_x, thumb_y, 4, thumb_h, accent);
     }
 
-    /* 6. Durum çubuğu */
+    /* 6. Durum Çubuğu */
     int status_y = cy + ch - status_h;
     graphics_fill_rect(cx, status_y, cw, status_h, status_bg);
     graphics_fill_rect(cx, status_y, cw, 1, menu_border);
@@ -506,14 +503,13 @@ void notepad_draw(gui_window_t *win, int cx, int cy, int cw, int ch) {
     const char *state_text = g_np.modified ? "Kaydedilmedi" : "Kaydedildi";
     uint32_t state_col = g_np.modified ? modified_col : saved_col;
     int state_len = (int)k_strlen(state_text);
-    int state_x = cx + cw - 14 - (state_len * 7);
+    int state_x = cx + cw - 14 - (state_len * UI_CHAR_WIDTH);
 
     fill_circle(state_x - 10, status_y + status_h / 2, 3, state_col);
     ui_draw_text(state_text, state_x, status_y + 5, state_col, status_bg, 12.0f);
 
-    /* 7. KAYDETME PROMPTU (modal) — her seyin en ustunde cizilir */
+    /* 7. KAYDETME PROMPTU */
     if (s_save_prompt_active) {
-        /* Tum icerigi karartan yari saydam ortu */
         fill_rounded_rect_alpha(cx, cy, cw, ch, 0, graphics_rgb(0, 0, 0), 150);
 
         int box_w = 320;
@@ -531,7 +527,6 @@ void notepad_draw(gui_window_t *win, int cx, int cy, int cw, int ch) {
         ui_draw_text("Dosya adi:", box_x + 16, box_y + 36,
             dim_text, graphics_rgb(38, 40, 48), 12.0f);
 
-        /* Giriş kutusu */
         int input_x = box_x + 16;
         int input_y = box_y + 52;
         int input_w = box_w - 32;
@@ -541,9 +536,9 @@ void notepad_draw(gui_window_t *win, int cx, int cy, int cw, int ch) {
         ui_draw_text(s_save_prompt_buf, input_x + 6, input_y + 4,
             graphics_rgb(240, 240, 244), graphics_rgb(20, 21, 26), 13.0f);
 
-        /* Yanıp sönen imleç */
+        /* DÜZELTME: Kaydetme promptunda da genişlik hesaplaması düzeltildi */
         if ((s_frame / 30) % 2 == 0) {
-            int cur_x = input_x + 6 + (s_save_prompt_len * NOTEPAD_CHAR_WIDTH);
+            int cur_x = input_x + 6 + (s_save_prompt_len * UI_CHAR_WIDTH);
             graphics_fill_rect(cur_x, input_y + 3, 2, input_h - 6, graphics_rgb(255, 255, 255));
         }
 
@@ -560,7 +555,6 @@ void notepad_on_key(int win_id, char ascii, uint8_t scancode) {
     (void)win_id;
     if (!g_np.active) return;
 
-    /* ---- KAYDETME PROMPTU ACIKKEN: tum tuslar dosya adi kutusuna gider ---- */
     if (s_save_prompt_active) {
         if (ascii == '\n' || ascii == '\r') {
             if (s_save_prompt_len > 0) {
@@ -570,7 +564,7 @@ void notepad_on_key(int win_id, char ascii, uint8_t scancode) {
             return;
         }
 
-        if (ascii == 27) { /* ESC -> iptal */
+        if (ascii == 27) {
             s_save_prompt_active = false;
             return;
         }
@@ -620,9 +614,6 @@ void notepad_on_key(int win_id, char ascii, uint8_t scancode) {
             return;
     }
 
-    /* Ctrl+S benzeri kisayol yok (fiziksel Ctrl takibi olmadigi icin),
-     * ama menuden Kaydet/Farkli Kaydet her zaman kullanilabilir. */
-
     if (ascii == '\n' || ascii == '\r') {
         notepad_insert_char('\n');
     } else if (ascii == '\b') {
@@ -633,30 +624,29 @@ void notepad_on_key(int win_id, char ascii, uint8_t scancode) {
 }
 
 void notepad_handle_mouse(int win_id, int mouse_x, int mouse_y, uint8_t buttons) {
-    /* Hover efektleri icin en son fare konumunu her zaman guncelle */
     s_last_mouse_x = mouse_x;
     s_last_mouse_y = mouse_y;
 
     if (win_id != g_np.win_id) return;
     if (!(buttons & 0x01)) return;
 
-    /* Kaydetme promptu acikken menu/metin tiklamalarini yok say
-     * (kullanici Enter/Esc ile kapatmali) */
     if (s_save_prompt_active) return;
 
-    /* Acik "Dosya" dropdown'u varsa once onun tiklamalarini isle */
+    /* Dropdown menü kontrolleri */
     if (s_file_menu_open) {
         int drop_x = s_menu_x[0] - 6;
         int drop_y = NP_MENU_H;
+        int drop_h = 2 * NP_DROPDOWN_ITEM_H + 8;
 
-        if (mouse_x >= drop_x && mouse_x < drop_x + NP_DROPDOWN_W && mouse_y >= drop_y) {
+        if (mouse_x >= drop_x && mouse_x < drop_x + NP_DROPDOWN_W &&
+            mouse_y >= drop_y && mouse_y < drop_y + drop_h) {
             int rel_y = mouse_y - (drop_y + 4);
             if (rel_y >= 0) {
                 int idx = rel_y / NP_DROPDOWN_ITEM_H;
                 if (idx == 0) {
-                    notepad_begin_save(false); /* Kaydet */
+                    notepad_begin_save(false);
                 } else if (idx == 1) {
-                    notepad_begin_save(true);  /* Farkli Kaydet */
+                    notepad_begin_save(true);
                 }
             }
         }
@@ -665,12 +655,43 @@ void notepad_handle_mouse(int win_id, int mouse_x, int mouse_y, uint8_t buttons)
         return;
     }
 
-    /* Üst menü sekmelerine tıklama — sadece "Dosya" işlevsel */
+    /* Üst menü sekmeleri */
     if (mouse_y >= 0 && mouse_y < NP_MENU_H) {
         if (mouse_x >= s_menu_x[0] && mouse_x < s_menu_x[0] + s_menu_w[0]) {
             s_file_menu_open = !s_file_menu_open;
         }
         return;
+    }
+
+    /* YENİ: Metin alanına fare ile tıklayarak imleç konumlandırma */
+    if (mouse_y >= NP_MENU_H) {
+        int gutter_w = 46;
+        int text_x = gutter_w + 10;
+        int clicked_rel_line = (mouse_y - NP_MENU_H - 4) / NOTEPAD_LINE_HEIGHT;
+        if (clicked_rel_line < 0) clicked_rel_line = 0;
+
+        int target_line = g_np.scroll_y + clicked_rel_line;
+        int cur_line = 0;
+        int char_idx = 0;
+        int line_start = 0;
+
+        while (char_idx <= g_np.text_len) {
+            if (char_idx == g_np.text_len || g_np.buffer[char_idx] == '\n') {
+                if (cur_line == target_line) {
+                    int line_len = char_idx - line_start;
+                    int click_col = (mouse_x - text_x + (UI_CHAR_WIDTH / 2)) / UI_CHAR_WIDTH;
+                    if (click_col < 0) click_col = 0;
+                    if (click_col > line_len) click_col = line_len;
+
+                    g_np.cursor_pos = line_start + click_col;
+                    notepad_update_line_col();
+                    break;
+                }
+                cur_line++;
+                line_start = char_idx + 1;
+            }
+            char_idx++;
+        }
     }
 }
 

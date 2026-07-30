@@ -23,6 +23,18 @@ struct gui_window;
 typedef void (*gui_draw_cb_t)(struct gui_window *win, int cx, int cy, int cw, int ch);
 typedef void (*menu_item_callback_t)(void);
 typedef void (*save_dialog_cb_t)(const char *filename, bool saved);
+typedef void (*gui_key_cb_t)(int win_id, char ch, uint8_t scancode);
+typedef void (*gui_close_cb_t)(int win_id);
+typedef void (*gui_mouse_cb_t)(int win_id, int mouse_x, int mouse_y, uint8_t buttons); /* YENİ */
+
+/* 2. SONRA FONKSİYON BİLDİRİMLERİ */
+void gui_set_key_callback(int win_id, gui_key_cb_t cb);
+void gui_set_close_callback(int win_id, gui_close_cb_t cb);
+void gui_set_mouse_callback(int win_id, gui_mouse_cb_t cb); /* YENİ */
+
+void gui_set_cursor(const char *bmp_path);
+void gui_set_wallpaper(const char *bmp_path);
+bool gui_needs_redraw(void);
 
 /* Pencere Yapısı */
 typedef struct gui_window {

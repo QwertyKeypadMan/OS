@@ -28,21 +28,23 @@ void *k_memset(void *dest, int value, size_t count)
 
 void *k_memcpy(void *dest, const void *src, size_t count)
 {
-    uint8_t *to = dest;
-    const uint8_t *from = src;
+    uint8_t *to = (uint8_t *)dest;
+    const uint8_t *from = (const uint8_t *)src;
 
-    size_t words = count / sizeof(uint32_t);
-    if (words > 0) {
+    /* Hem kaynak hem hedef adres 4-bayt hizalıysa 32-bit hızlı kopyalama yap */
+    if (((uintptr_t)to % 4 == 0) && ((uintptr_t)from % 4 == 0)) {
+        size_t words = count / sizeof(uint32_t);
         uint32_t *dw = (uint32_t *)to;
         const uint32_t *sw = (const uint32_t *)from;
+
         for (size_t i = 0; i < words; i++) {
             dw[i] = sw[i];
         }
-    }
 
-    size_t consumed = words * sizeof(uint32_t);
-    for (size_t i = consumed; i < count; i++) {
-        to[i] = from[i];
+        size_t consumed = words * sizeof(uint32_t);
+        for (size_t i = consumed; i < count; i++) {
+            to[i] = from[i];
+        }
     }
 
     return dest;
@@ -322,12 +324,17 @@ void *krealloc(void *ptr, size_t size) {
     return k_realloc_sized(ptr, 0, size);
 }
 
-// LUA'YA VERİLECEK ALLOCATOR FONKSİYONU
-void *kayaos_lua_alloc(void *ud, void *ptr, size_t osize, size_t nsize) {
-    (void)ud;
-    if (nsize == 0) {
-        k_free(ptr);
-        return NULL;
-    }
-    return k_realloc_sized(ptr, osize, nsize);
+#include "zlib.h"
+#include "kernel/memory.h" // kmalloc ve kfree tanımların
+
+/* zlib için özel bellek ayırma callback'i */
+static voidpf zlib_kmalloc(voidpf opaque, uInt items, uInt size) {
+    (void)opaque;
+    return kmalloc(items * size);
+}
+
+/* zlib için özel bellek serbest bırakma callback'i */
+static void zlib_kfree(voidpf opaque, voidpf address) {
+    (void)opaque;
+    kfree(address);
 }

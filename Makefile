@@ -10,39 +10,24 @@ ASMFLAGS := -f elf32 -g -F dwarf
 GCC_PRIVATE_INCLUDE := $(shell $(CC) -print-file-name=include)
 
 # Base Kernel CFLAGS
-# -mno-sse -mno-sse2 : Donanımsal SSE komutlarını kapatıp Invalid Opcode (#UD) paniğini önler.
-# -fno-pic -fno-pie  : Dinamik adres bağımsızlığını kapatır.
 CFLAGS := -m32 -std=gnu11 -ffreestanding -O2 -Wall -Wextra  \
           -Iinclude -I.  \
           -fno-builtin -fno-stack-protector -fno-pic -fno-pie -g \
           -mno-sse -mno-sse2 \
           -fno-asynchronous-unwind-tables -fno-unwind-tables -D_FORTIFY_SOURCE=0
-		  
-MINISCRIPT_SRCS = \
-    kernel/miniscript/ms_code.c \
-    kernel/miniscript/ms_compiler.c \
-    kernel/miniscript/ms_debug.c \
-    kernel/miniscript/ms_map.c \
-    kernel/miniscript/ms_mem.c \
-    kernel/miniscript/ms_object.c \
-    kernel/miniscript/ms_scanner.c \
-    kernel/miniscript/ms_value.c \
-    kernel/miniscript/ms_vm.c
-
-C_SOURCES += $(MINISCRIPT_SRCS)
-
+          
 # Base Kernel LDFLAGS
-# -static -Wl,-n -no-pie : .plt, .got.plt, .dynamic ve .interp gibi dynamic-linker 
-#                          bölümlerinin oluşmasını TAMAMEN engeller.
-# --allow-multiple-definition: Çekirdek içi malloc/free/abort stubs ile libc çakışmasını çözer.
 LDFLAGS := -m32 -T linker.ld -ffreestanding -nostdlib -static -no-pie \
-           -Wl,-n -Wl,--build-id=none -Wl,--allow-multiple-definition
-		   
+           -Wl,-n -Wl,--build-id=none -Wl,--allow-multiple-definition 
+
 GENERATED_DIR := src/generated
 
 # ==============================================================================
 #  NEWLIB (libc.a) YAPILANDIRMASI
 # ==============================================================================
+# Makefile CFLAGS içine eklenecekler:
+CFLAGS += -DNO_GZCOMPRESS -DNO_GZIP -DZ_SOLO
+
 LIBC_DIR := lib
 LIBC_LIBS := -L$(LIBC_DIR) -lc -lm
 
@@ -65,7 +50,7 @@ FT_CFLAGS   := -I$(FT_VENDOR_DIR)/include \
                -DFT_CONFIG_OPTIONS_H="\"$(FT_KAYAOS_DIR)/ftoption_kayaos.h\"" \
                -DFT_CONFIG_MODULES_H="\"$(FT_KAYAOS_DIR)/kayaos_ftmodule.h\""
 
-FT_SOURCES  := $(FT_VENDOR_DIR)/src/base/ftbase.c \
+FT_SOURCES   := $(FT_VENDOR_DIR)/src/base/ftbase.c \
                $(FT_VENDOR_DIR)/src/base/ftinit.c \
                $(FT_VENDOR_DIR)/src/base/ftbbox.c \
                $(FT_VENDOR_DIR)/src/base/ftglyph.c \
@@ -80,20 +65,18 @@ FT_SOURCES  := $(FT_VENDOR_DIR)/src/base/ftbase.c \
 # ==============================================================================
 #  C KAYNAK DOSYALARI VE TCC SÜZME İŞLEMİ (Unity-Build Filtresi)
 # ==============================================================================
-# src/kernel/syscalls.c dosyası wildcard ile otomatik yakalanacaktır.
-RAW_C_SOURCES := $(wildcard src/kernel/*.c) $(wildcard src/kernel/*/*.c) $(wildcard src/kernel/*/*/*.c) $(wildcard src/kernel/*/*/*/*.c) $(FT_SOURCES) $(wildcard $(GENERATED_DIR)/*.c)
+# LUA_SOURCES listeye eklendi!
+RAW_C_SOURCES := $(wildcard src/kernel/*.c) $(wildcard src/kernel/*/*.c) \
+                 $(wildcard src/kernel/*/*/*.c) $(wildcard src/kernel/*/*/*/*.c) \
+                 $(FT_SOURCES) $(LUA_SOURCES) $(wildcard $(GENERATED_DIR)/*.c)
 
-# libtcc.c dosyası aşağıdaki C dosyalarını kendi içerisinde #include eder (Unity Build).
-# Bu alt kaynak dosyaları ayrı derlenirse "multiple definition" çakışması oluşur.
 TCC_EXCLUDES := src/kernel/tcc/tccpp.c src/kernel/tcc/tccgen.c src/kernel/tcc/tccelf.c \
                 src/kernel/tcc/tccrun.c src/kernel/tcc/tccasm.c src/kernel/tcc/tccdbg.c \
                 src/kernel/tcc/i386-gen.c src/kernel/tcc/i386-link.c src/kernel/tcc/i386-asm.c
 
-# Dahil edilmeyecek dosyalar süzülerek nihai C kaynak listesi oluşturulur:
 C_SOURCES := $(filter-out $(TCC_EXCLUDES), $(RAW_C_SOURCES))
 
-# Tüm Assembly kaynak dosyalarımız
-BOOT_SOURCES       := $(wildcard src/boot/*.s)
+BOOT_SOURCES        := $(wildcard src/boot/*.s)
 KERNEL_ASM_SOURCES := $(wildcard src/kernel/*.asm)
 
 # ==============================================================================
@@ -112,20 +95,28 @@ all: $(KERNEL)
 iso: $(ISO)
 
 run: $(ISO)
-	# QEMU simülasyonunu başlat
-	sudo qemu-system-i386 -m 2048 -smp cores=4 -cdrom build/kayaos.iso -serial stdio
+	sudo qemu-system-i386 \
+	-m 2048 \
+	-smp cores=4 \
+	-cdrom build/kayaos.iso \
+	-serial stdio \
+	-device virtio-gpu-pci \
+	-device virtio-net-pci
 
 assets:
 	python3 tools/embed_assets.py assets $(GENERATED_DIR)
 
-$(KERNEL): $(OBJECTS) linker.ld
+$(KERNEL): assets $(OBJECTS) linker.ld
 	$(CC) $(LDFLAGS) $(OBJECTS) $(LIBC_LIBS) -o $@ -lgcc
 	grub-file --is-x86-multiboot $@
 
+# DÜZELTİLDİ: initrd.tar ve nsfb dosyaları ISO klasörüne kopyalanıyor!
 $(ISO): $(KERNEL) boot/grub/grub.cfg
 	mkdir -p $(ISO_DIR)/boot/grub
 	cp $(KERNEL) $(ISO_DIR)/boot/kayaos.kernel
 	cp boot/grub/grub.cfg $(ISO_DIR)/boot/grub/grub.cfg
+	@if [ -f initrd.tar ]; then cp initrd.tar $(ISO_DIR)/boot/initrd.tar; fi
+	@if [ -f nsfb ]; then cp nsfb $(ISO_DIR)/boot/nsfb; fi
 	grub-mkrescue -o $@ $(ISO_DIR)
 
 # ==============================================================================

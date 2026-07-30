@@ -45,8 +45,18 @@ void virtio_gpu_queue_send_cmd(virtio_gpu_device_t *dev, void *cmd, uint32_t cmd
     virtio_gpu_log(VIRTIO_LOG_PREFIX_VQ, "Komut Kuyruğa Eklendi. Komut Tipi: 0x%x", ((virtio_gpu_ctrl_hdr_t*)cmd)->type);
 
     /* Cihaza Bildir (Notify) - Legacy IO veya MMIO Doorbell */
-    if (!dev->is_mmio && dev->io_base) {
-        /* PCI I/O Notify register adresi `io_base + 0x10` civarındadır */
+    uint16_t used_idx_before = vq->used.idx;
+
+ if (!dev->is_mmio && dev->io_base) {
+        /* PCI I/O Notify register adresi `io_base + 0x10` civar\xc4\xb1ndad\xc4\xb1r */
         *(volatile uint16_t*)(uintptr_t)(dev->io_base + 0x10) = VIRTIO_GPU_QUEUE_CONTROL;
+    }
+
+    uint32_t timeout = 20000000;
+    while (vq->used.idx == used_idx_before && --timeout) {
+        __asm__ __volatile__("pause");
+    }
+    if (timeout == 0) {
+        virtio_gpu_log(VIRTIO_LOG_PREFIX_VQ, "UYARI: Komut yaniti zaman asimina ugradi!");
     }
 }
