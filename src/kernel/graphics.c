@@ -1014,7 +1014,7 @@ bool graphics_initialize(const multiboot_info_t *info) {
 
     // AKILLI ADRES SEÇİMİ (HYBRID)
     // Eğer info geçerliyse ve GRUB bir adres bildirmişse onu al (VirtualBox için)
-    if (info && info->framebuffer_addr_low != 0) {
+    if (info && (info->flags & (1u << 12)) && info->framebuffer_addr_low != 0) {
         framebuffer = (uint8_t *)(uintptr_t)info->framebuffer_addr_low;
         fb_width    = info->framebuffer_width;
         fb_height   = info->framebuffer_height;
